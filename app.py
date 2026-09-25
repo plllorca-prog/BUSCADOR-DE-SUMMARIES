@@ -18,49 +18,42 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# BASE DE DATOS REAL (EXCEL GOP - CRUZANDO PESTAÑAS)
+# BASE DE DATOS REAL (SOLO PESTAÑA RawData_1)
 # ==========================================
 @st.cache_data
 def cargar_ofertas():
     archivo_excel = "DataBase_Offers_V02-20260924.xlsx"
     
     try:
-        # 1. Leer ambas pestañas
+        # 1. Leer SOLO la pestaña RawData_1
         df_raw = pd.read_excel(archivo_excel, sheet_name="RawData_1")
-        df_data = pd.read_excel(archivo_excel, sheet_name="Data")
         
-        # 2. Filtrar solo las ofertas de categoría A en RawData_1
-        df_raw_a = df_raw[df_raw["offer_category"] == "A"].copy()
+        # 2. Filtrar solo las ofertas de categoría A
+        df_ofertas = df_raw[df_raw["offer_category"] == "A"].copy()
         
-        # 3. Cruzar (Merge) con la pestaña 'Data' usando nombre de proyecto y versión
-        df_merged = pd.merge(
-            df_raw_a[["proj_name", "version", "offer_category"]], 
-            df_data, 
-            on=["proj_name", "version"], 
-            how="inner"
-        )
+        # 3. Adaptar los nombres de las columnas generales
+        df_ofertas["id"] = df_ofertas["proj_name"].astype(str) + " (v" + df_ofertas["version"].astype(str) + ")"
+        df_ofertas["nombre"] = df_ofertas["client"]
+        df_ofertas["tipo"] = df_ofertas["offer_category"].astype(str) + " (" + df_ofertas["code"].astype(str) + ")"
+        df_ofertas["ubicacion"] = df_ofertas["country"]
         
-        # 4. Adaptar los nombres de las columnas reales
-        df_merged["id"] = df_merged["proj_name"] + " (v" + df_merged["version"].astype(str) + ")"
-        df_merged["nombre"] = df_merged["client"]
-        df_merged["tipo"] = df_merged["offer_category"] + " (" + df_merged["code"].astype(str) + ")"
-        df_merged["ubicacion"] = df_merged["country"]
+        # Asumiendo que la ruta está en la misma pestaña al tener los mismos datos
+        df_ofertas["ruta_summary"] = df_ofertas["file_root"] if "file_root" in df_ofertas.columns else "Sin ruta disponible"
         
-        # Extraer la ruta directamente de la pestaña Data
-        df_merged["ruta_summary"] = df_merged["file_root"]
+        # 4. Extraer los parámetros técnicos exactos que has pedido
+        df_ofertas["viento_ms"] = df_ofertas["wind_spd"]
+        df_ofertas["max_clearance_mm"] = df_ofertas["max_clearance"]
+        df_ofertas["longitud_tr1"] = df_ofertas["length_Tr1"]
         
-        # Parámetros técnicos estructurales
-        df_merged["viento_ms"] = df_merged["wind_spd"]
-        df_merged["clearance_mm"] = df_merged["min_clearance"]
-        
-        # Limpieza de datos (sin strings ni módulos)
-        df_merged = df_merged.fillna({
-            "viento_ms": 0, "clearance_mm": 0, 
-            "ubicacion": "Desconocido",
-            "ruta_summary": "Sin ruta disponible"
+        # Limpieza de datos nulos
+        df_ofertas = df_ofertas.fillna({
+            "viento_ms": 0, 
+            "max_clearance_mm": 0, 
+            "longitud_tr1": 0,
+            "ubicacion": "Desconocido"
         })
         
-        return df_merged
+        return df_ofertas
     except Exception as e:
         st.error(f"Error al leer el Excel: {e}")
         return pd.DataFrame()
@@ -87,11 +80,13 @@ with tab_app:
 
     # INPUTS
     st.markdown("##### 1. Parámetros de la nueva oferta")
-    c1, c2 = st.columns(2)
+    c1, c2, c3 = st.columns(3)
     with c1:
-        viento_in = st.number_input("Viento (m/s) *", value=26.0, step=0.5)
+        viento_in = st.number_input("Viento (wind_spd) *", value=26.0, step=0.5)
     with c2:
-        clearance_in = st.number_input("Clearance (mm) *", value=500, step=50)
+        clearance_in = st.number_input("Max Clearance (mm) *", value=500, step=50)
+    with c3:
+        longitud_in = st.number_input("Longitud Tr1 *", value=60.0, step=1.0)
 
     c_sub1, c_sub2 = st.columns([2, 2])
     with c_sub1:
@@ -116,28 +111,32 @@ with tab_app:
             st.warning("No se encontraron ofertas que cumplan con la condición de viento.")
         else:
             def scoring(row):
-                # Puntuación basada solo en el Clearance (100% si coincide, 75% si no)
-                return 100.0 if row["clearance_mm"] == clearance_in else 75.0
+                # Sistema de puntuación simple: 50% si coincide el clearance, 50% si coincide la longitud
+                pts = 0.0
+                if row["max_clearance_mm"] == clearance_in:
+                    pts += 50.0
+                if row["longitud_tr1"] == longitud_in:
+                    pts += 50.0
+                return pts
 
             df_res["pct"] = df_res.apply(scoring, axis=1)
             df_res = df_res.sort_values(by="pct", ascending=False)
 
-            for _, row in df_res.iterrows():
+            for idx, (_, row) in enumerate(df_res.iterrows()):
                 with st.container():
                     r1, r2, r3, r4 = st.columns([2.5, 3, 2, 1])
                     with r1:
                         st.markdown(f"**{row['id']}**")
                         st.caption(f"Cliente: {row['nombre']} | Ubicación: {row['ubicacion']}")
                     with r2:
-                        st.markdown(f"Viento: **{row['viento_ms']} m/s** | Clearance: **{row['clearance_mm']} mm**")
-                        st.caption(f"Tipo: {row['tipo']}")
+                        st.markdown(f"Viento: **{row['viento_ms']} m/s** | Max Clearance: **{row['max_clearance_mm']} mm**")
+                        st.caption(f"Longitud Tr1: {row['longitud_tr1']} | Tipo: {row['tipo']}")
                     with r3:
-                        st.markdown(f"{row['pct']:.0f}% Coincidencia", unsafe_allow_html=True)
-                        if row['viento_ms'] == viento_in and row['clearance_mm'] == clearance_in:
+                        st.markdown(f"{row['pct']:.0f}% Coincidencia (Sin viento)", unsafe_allow_html=True)
+                        if row['viento_ms'] == viento_in and row['max_clearance_mm'] == clearance_in and row['longitud_tr1'] == longitud_in:
                             st.markdown(" Geometría Exacta", unsafe_allow_html=True)
                     with r4:
-                        # Al hacer clic, muestra la ruta extraída de la BBDD
-                        if st.button("Ver Ruta", key=f"btn_{row['proj_name']}_{row['version']}"):
+                        if st.button("Ver Ruta", key=f"btn_{idx}_{row['proj_name']}_{row['version']}"):
                             st.info(f"📁 {row['ruta_summary']}")
                     st.divider()
 
