@@ -43,10 +43,6 @@ def cargar_ofertas():
         else:
             df_ofertas = df_raw.copy()
             
-        # Eliminar duplicados por proyecto y versión
-        if "proj_name" in df_ofertas.columns and "version" in df_ofertas.columns:
-            df_ofertas = df_ofertas.drop_duplicates(subset=["proj_name", "version"])
-        
         # Mapeo general
         df_ofertas["id"] = df_ofertas["proj_name"].astype(str) + " (v" + df_ofertas["version"].astype(str) + ")"
         df_ofertas["nombre"] = df_ofertas["client"] if "client" in df_ofertas.columns else "Cliente no especificado"
@@ -58,6 +54,14 @@ def cargar_ofertas():
         df_ofertas["viento_ms"] = convertir_a_float(df_ofertas["wind_spd"]) if "wind_spd" in df_ofertas.columns else 0.0
         df_ofertas["max_clearance_mm"] = convertir_a_float(df_ofertas["max_clearance"]) if "max_clearance" in df_ofertas.columns else 0.0
         df_ofertas["longitud_tr1"] = convertir_a_float(df_ofertas["length_Tr1"]) if "length_Tr1" in df_ofertas.columns else 0.0
+        
+        # DEDUPLICACIÓN INTELIGENTE:
+        # Solo eliminamos la fila si comparte proyecto, versión Y exactamente los mismos valores técnicos
+        columnas_filtro_duplicados = ["proj_name", "version", "viento_ms", "max_clearance_mm", "longitud_tr1"]
+        cols_existentes = [c for c in columnas_filtro_duplicados if c in df_ofertas.columns]
+        
+        if cols_existentes:
+            df_ofertas = df_ofertas.drop_duplicates(subset=cols_existentes)
         
         df_ofertas = df_ofertas.fillna({
             "ubicacion": "Desconocido",
