@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import re
 
 # ==========================================
 # CONFIGURACIÓN DE PÁGINA
@@ -22,6 +23,25 @@ def convertir_a_float(serie):
         serie.astype(str).str.replace(',', '.', regex=False).str.strip(),
         errors='coerce'
     ).fillna(0.0)
+
+# Función para limpiar la ruta local de usuario
+def limpiar_ruta(ruta_raw):
+    if not isinstance(ruta_raw, str) or pd.isna(ruta_raw):
+        return "Sin ruta disponible"
+    
+    ruta = str(ruta_raw).strip()
+    
+    # Quitar la cabecera local hasta "GOP_PRO - Offer (X)" o "GRUPO GRANSOLAR"
+    match = re.search(r'(?:GOP_PRO\s*-\s*Offer\s*\(\d+\)|GRUPO\s+GRANSOLAR)[\\/]+(.*)', ruta, re.IGNORECASE)
+    if match:
+        return match.group(1).replace('/', '\\')
+        
+    # Si empieza por C:\Users\... recortar las primeras carpetas
+    match_user = re.search(r'^[a-zA-Z]:[\\/]Users[\\/][^\\/]+[\\/][^\\/]+[\\/][^\\/]+[\\/]+(.*)', ruta, re.IGNORECASE)
+    if match_user:
+        return match_user.group(1).replace('/', '\\')
+
+    return ruta.replace('/', '\\')
 
 # ==========================================
 # BASE DE DATOS REAL (PESTAÑA RawData_1)
@@ -48,7 +68,12 @@ def cargar_ofertas():
         df_ofertas["nombre"] = df_ofertas["client"] if "client" in df_ofertas.columns else "Cliente no especificado"
         df_ofertas["tipo"] = df_ofertas["offer_category"].astype(str) + " (" + df_ofertas["code"].astype(str) + ")" if "code" in df_ofertas.columns else df_ofertas["offer_category"].astype(str)
         df_ofertas["ubicacion"] = df_ofertas["country"] if "country" in df_ofertas.columns else "Desconocido"
-        df_ofertas["ruta_summary"] = df_ofertas["file_root"] if "file_root" in df_ofertas.columns else "Sin ruta disponible"
+        
+        # Limpieza de la ruta
+        if "file_root" in df_ofertas.columns:
+            df_ofertas["ruta_summary"] = df_ofertas["file_root"].apply(limpiar_ruta)
+        else:
+            df_ofertas["ruta_summary"] = "Sin ruta disponible"
         
         # Conversión segura de números procesando comas decimales
         df_ofertas["viento_ms"] = convertir_a_float(df_ofertas["wind_spd"]) if "wind_spd" in df_ofertas.columns else 0.0
@@ -98,7 +123,6 @@ with tab_app:
     with c2:
         clearance_in = st.number_input("Max Clearance (mm) *", value=900, step=50)
     with c3:
-        # Input Opcional: Si se deja vacío (None), no se usa como filtro
         longitud_in = st.number_input("Longitud Tr1 (Opcional)", value=None, placeholder="Ej: 139.2", step=1.0)
 
     c_sub1, c_sub2 = st.columns([2, 2])
@@ -122,7 +146,6 @@ with tab_app:
         if df_res.empty:
             st.warning("No se encontraron ofertas que cumplan con la condición de viento.")
         else:
-            # Puntuación según si Longitud Tr1 se ha especificado o no
             def scoring(row):
                 if longitud_in is not None and longitud_in > 0:
                     pts = 0.0
@@ -132,7 +155,6 @@ with tab_app:
                         pts += 50.0
                     return pts
                 else:
-                    # Si no se especifica longitud, la coincidencia depende únicamente del clearance
                     return 100.0 if abs(row["max_clearance_mm"] - clearance_in) <= 1.0 else 50.0
 
             df_res["pct"] = df_res.apply(scoring, axis=1)
@@ -150,7 +172,6 @@ with tab_app:
                     with r3:
                         st.markdown(f"{row['pct']:.0f}% Coincidencia", unsafe_allow_html=True)
                         
-                        # Comprobar si es Geometría Exacta
                         viento_ok = abs(row['viento_ms'] - viento_in) <= 0.1
                         clearance_ok = abs(row['max_clearance_mm'] - clearance_in) <= 1.0
                         
@@ -163,8 +184,10 @@ with tab_app:
                         if exacta:
                             st.markdown(" Geometría Exacta", unsafe_allow_html=True)
                     with r4:
-                        if st.button("Ver Ruta", key=f"btn_{idx}_{row['id']}"):
-                            st.info(f"📁 {row['ruta_summary']}")
+                        # Popover para ver y copiar la ruta limpiada
+                        with st.popover("📁 Ver Ruta"):
+                            st.markdown("**Ruta relativa del configurador:**")
+                            st.code(row['ruta_summary'], language="text")
                     st.divider()
 
 with tab_code:
@@ -172,4 +195,3 @@ with tab_code:
     with open(__file__, "r", encoding="utf-8") as f:
         code_text = f.read()
     st.code(code_text, language="python")
-    
