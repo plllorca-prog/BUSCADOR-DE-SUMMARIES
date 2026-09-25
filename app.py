@@ -12,38 +12,63 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# Estilos CSS limpios (sin ocultar el header nativo de Streamlit)
+# Estilos CSS limpios
 st.markdown("""
 
 """, unsafe_allow_html=True)
 
 # ==========================================
-# BASE DE DATOS DE PRUEBA
+# BASE DE DATOS REAL (EXCEL GOP - CRUZANDO PESTAÑAS)
 # ==========================================
 @st.cache_data
 def cargar_ofertas():
-    return pd.DataFrame([
-        {
-            "id": "OFR-2026-001", "nombre": "Parque Solar Palma East", "tipo": "Tipo A",
-            "viento_ms": 29.0, "clearance_mm": 800, "num_strings": 24, "num_modulos": 576,
-            "ubicacion": "Mallorca"
-        },
-        {
-            "id": "OFR-2025-089", "nombre": "Planta Fotovoltaica Calvia", "tipo": "Tipo A",
-            "viento_ms": 29.0, "clearance_mm": 800, "num_strings": 28, "num_modulos": 640,
-            "ubicacion": "Mallorca"
-        },
-        {
-            "id": "OFR-2025-042", "nombre": "Campos Sol II", "tipo": "Tipo B",
-            "viento_ms": 29.0, "clearance_mm": 900, "num_strings": 24, "num_modulos": 576,
-            "ubicacion": "Mallorca"
-        },
-        {
-            "id": "OFR-2026-015", "nombre": "Estepona Solar Park", "tipo": "Tipo A",
-            "viento_ms": 32.0, "clearance_mm": 1000, "num_strings": 32, "num_modulos": 800,
-            "ubicacion": "Malaga"
-        }
-    ])
+    archivo_excel = "DataBase_Offers_V02-20260924.xlsx"
+    
+    try:
+        # 1. Leer ambas pestañas
+        df_raw = pd.read_excel(archivo_excel, sheet_name="RawData_1")
+        df_data = pd.read_excel(archivo_excel, sheet_name="Data")
+        
+        # 2. Filtrar solo las ofertas de categoría A en RawData_1
+        df_raw_a = df_raw[df_raw["offer_category"] == "A"].copy()
+        
+        # 3. Cruzar (Merge) con la pestaña 'Data' usando nombre de proyecto y versión
+        df_merged = pd.merge(
+            df_raw_a[["proj_name", "version", "offer_category"]], 
+            df_data, 
+            on=["proj_name", "version"], 
+            how="inner"
+        )
+        
+        # 4. Adaptar los nombres de las columnas reales
+        df_merged["id"] = df_merged["proj_name"] + " (v" + df_merged["version"].astype(str) + ")"
+        df_merged["nombre"] = df_merged["client"]
+        df_merged["tipo"] = df_merged["offer_category"] + " (" + df_merged["code"].astype(str) + ")"
+        df_merged["ubicacion"] = df_merged["country"]
+        
+        # Extraer la ruta directamente de la pestaña Data
+        df_merged["ruta_summary"] = df_merged["file_root"]
+        
+        # Parámetros técnicos estructurales
+        df_merged["viento_ms"] = df_merged["wind_spd"]
+        df_merged["clearance_mm"] = df_merged["min_clearance"]
+        df_merged["num_strings"] = df_merged["string_Tr1"]
+        
+        # Calculamos el total de módulos por tracker
+        df_merged["num_modulos"] = df_merged["string_Tr1"] * df_merged["mod_str"]
+        
+        # Limpieza de datos
+        df_merged = df_merged.fillna({
+            "viento_ms": 0, "clearance_mm": 0, 
+            "num_strings": 0, "num_modulos": 0, 
+            "ubicacion": "Desconocido",
+            "ruta_summary": "Sin ruta disponible"
+        })
+        
+        return df_merged
+    except Exception as e:
+        st.error(f"Error al leer el Excel: {e}")
+        return pd.DataFrame()
 
 df_ofertas = cargar_ofertas()
 
@@ -57,11 +82,11 @@ with tab_app:
     col_h, col_m1, col_m2 = st.columns([3, 1, 1])
     with col_h:
         st.title("Buscador de Summaries")
-        st.caption("Filtro de cálculos estructurales Tipo A y B sincronizado con GOP")
+        st.caption("Filtro de cálculos estructurales sincronizado con Excel GOP")
     with col_m1:
         st.metric(label="Ofertas Base", value=len(df_ofertas))
     with col_m2:
-        st.metric(label="Estado GOP", value="Conectado")
+        st.metric(label="Estado BBDD", value="Conectado")
 
     st.divider()
 
@@ -69,57 +94,63 @@ with tab_app:
     st.markdown("##### 1. Parámetros de la nueva oferta")
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        viento_in = st.number_input("Viento (m/s) *", value=29.0, step=0.5)
+        viento_in = st.number_input("Viento (m/s) *", value=26.0, step=0.5)
     with c2:
-        clearance_in = st.number_input("Clearance (mm) *", value=800, step=50)
+        clearance_in = st.number_input("Clearance (mm) *", value=500, step=50)
     with c3:
-        strings_in = st.number_input("Nº de Strings", value=24, step=1)
+        strings_in = st.number_input("Nº de Strings", value=4, step=1)
     with c4:
-        modulos_in = st.number_input("Nº de Módulos", value=576, step=12)
+        modulos_in = st.number_input("Nº de Módulos", value=104, step=4)
 
     c_sub1, c_sub2 = st.columns([2, 2])
     with c_sub1:
-        ubicacion_in = st.text_input("Ubicación", value="Mallorca")
+        ubicacion_in = st.text_input("Ubicación", value="Kuwait")
     with c_sub2:
         regla_viento = st.radio("Criterio de Viento", ["Exacto (100%)", "Permitir Superior"], horizontal=True)
 
     # RESULTADOS
     st.divider()
     st.markdown("##### 2. Resultados compatibles")
-
-    if "Exacto" in regla_viento:
-        df_res = df_ofertas[df_ofertas["viento_ms"] == viento_in].copy()
+    
+    if df_ofertas.empty:
+        st.warning("No se ha cargado la base de datos o el archivo no está disponible.")
     else:
-        df_res = df_ofertas[df_ofertas["viento_ms"] >= viento_in].copy()
+        # Filtrado estricto por viento
+        if "Exacto" in regla_viento:
+            df_res = df_ofertas[df_ofertas["viento_ms"] == viento_in].copy()
+        else:
+            df_res = df_ofertas[df_ofertas["viento_ms"] >= viento_in].copy()
 
-    if df_res.empty:
-        st.warning("No se encontraron ofertas que cumplan con la condición de viento.")
-    else:
-        def scoring(row):
-            pts = 40.0 if row["clearance_mm"] == clearance_in else 20.0
-            pts += 30.0 if row["num_strings"] == strings_in else 10.0
-            pts += 30.0 if row["num_modulos"] == modulos_in else 10.0
-            return pts
+        if df_res.empty:
+            st.warning("No se encontraron ofertas que cumplan con la condición de viento.")
+        else:
+            def scoring(row):
+                pts = 40.0 if row["clearance_mm"] == clearance_in else 20.0
+                pts += 30.0 if row["num_strings"] == strings_in else 10.0
+                pts += 30.0 if row["num_modulos"] == modulos_in else 10.0
+                return pts
 
-        df_res["pct"] = df_res.apply(scoring, axis=1)
-        df_res = df_res.sort_values(by="pct", ascending=False)
+            df_res["pct"] = df_res.apply(scoring, axis=1)
+            df_res = df_res.sort_values(by="pct", ascending=False)
 
-        for _, row in df_res.iterrows():
-            with st.container():
-                r1, r2, r3, r4 = st.columns([2.5, 3, 2, 1])
-                with r1:
-                    st.markdown(f"**{row['id']}** — {row['nombre']}")
-                    st.caption(f"Tipo: {row['tipo']} | Ubicación: {row['ubicacion']}")
-                with r2:
-                    st.markdown(f"Viento: **{row['viento_ms']} m/s** | Clearance: **{row['clearance_mm']} mm**")
-                    st.caption(f"{row['num_strings']} Strings | {row['num_modulos']} Módulos")
-                with r3:
-                    st.markdown(f"{row['pct']:.0f}% Coincidencia", unsafe_allow_html=True)
-                    if row['viento_ms'] == viento_in and row['clearance_mm'] == clearance_in:
-                        st.markdown(" Geometría Exacta", unsafe_allow_html=True)
-                with r4:
-                    st.button("Abrir Summary", key=f"btn_{row['id']}")
-                st.divider()
+            for _, row in df_res.iterrows():
+                with st.container():
+                    r1, r2, r3, r4 = st.columns([2.5, 3, 2, 1])
+                    with r1:
+                        st.markdown(f"**{row['id']}**")
+                        st.caption(f"Cliente: {row['nombre']} | Ubicación: {row['ubicacion']}")
+                    with r2:
+                        st.markdown(f"Viento: **{row['viento_ms']} m/s** | Clearance: **{row['clearance_mm']} mm**")
+                        st.caption(f"{row['num_strings']} Strings | {row['num_modulos']} Módulos | {row['tipo']}")
+                    with r3:
+                        st.markdown(f"{row['pct']:.0f}% Coincidencia", unsafe_allow_html=True)
+                        if row['viento_ms'] == viento_in and row['clearance_mm'] == clearance_in:
+                            st.markdown(" Geometría Exacta", unsafe_allow_html=True)
+                    with r4:
+                        # Al hacer clic, muestra la ruta extraída de la BBDD
+                        if st.button("Ver Ruta", key=f"btn_{row['proj_name']}_{row['version']}"):
+                            st.info(f"📁 {row['ruta_summary']}")
+                    st.divider()
 
 # VISOR DE CÓDIGO FUENTE
 with tab_code:
