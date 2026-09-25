@@ -28,29 +28,31 @@ def cargar_ofertas():
         # 1. Leer SOLO la pestaña RawData_1
         df_raw = pd.read_excel(archivo_excel, sheet_name="RawData_1")
         
-        # 2. Filtrar solo las ofertas de categoría A
-        df_ofertas = df_raw[df_raw["offer_category"] == "A"].copy()
+        # 2. Filtrar ofertas que contengan "A" en offer_category (ej: "1 A", "A", "A ")
+        es_categoria_a = df_raw["offer_category"].astype(str).str.contains("A", case=False, na=False)
+        df_ofertas = df_raw[es_categoria_a].copy()
         
-        # 3. Adaptar los nombres de las columnas generales
+        # 3. Eliminar duplicados por proyecto y versión
+        df_ofertas = df_ofertas.drop_duplicates(subset=["proj_name", "version"])
+        
+        # 4. Adaptar columnas generales
         df_ofertas["id"] = df_ofertas["proj_name"].astype(str) + " (v" + df_ofertas["version"].astype(str) + ")"
         df_ofertas["nombre"] = df_ofertas["client"]
         df_ofertas["tipo"] = df_ofertas["offer_category"].astype(str) + " (" + df_ofertas["code"].astype(str) + ")"
         df_ofertas["ubicacion"] = df_ofertas["country"]
         
-        # Asumiendo que la ruta está en la misma pestaña al tener los mismos datos
+        # Extraer ruta del archivo
         df_ofertas["ruta_summary"] = df_ofertas["file_root"] if "file_root" in df_ofertas.columns else "Sin ruta disponible"
         
-        # 4. Extraer los parámetros técnicos exactos que has pedido
-        df_ofertas["viento_ms"] = df_ofertas["wind_spd"]
-        df_ofertas["max_clearance_mm"] = df_ofertas["max_clearance"]
-        df_ofertas["longitud_tr1"] = df_ofertas["length_Tr1"]
+        # 5. Convertir valores numéricos asegurando float
+        df_ofertas["viento_ms"] = pd.to_numeric(df_ofertas["wind_spd"], errors="coerce").fillna(0.0)
+        df_ofertas["max_clearance_mm"] = pd.to_numeric(df_ofertas["max_clearance"], errors="coerce").fillna(0.0)
+        df_ofertas["longitud_tr1"] = pd.to_numeric(df_ofertas["length_Tr1"], errors="coerce").fillna(0.0)
         
-        # Limpieza de datos nulos
+        # Limpieza de nulos en textos
         df_ofertas = df_ofertas.fillna({
-            "viento_ms": 0, 
-            "max_clearance_mm": 0, 
-            "longitud_tr1": 0,
-            "ubicacion": "Desconocido"
+            "ubicacion": "Desconocido",
+            "ruta_summary": "Sin ruta disponible"
         })
         
         return df_ofertas
@@ -82,15 +84,15 @@ with tab_app:
     st.markdown("##### 1. Parámetros de la nueva oferta")
     c1, c2, c3 = st.columns(3)
     with c1:
-        viento_in = st.number_input("Viento (wind_spd) *", value=26.0, step=0.5)
+        viento_in = st.number_input("Viento (wind_spd) *", value=55.5, step=0.5)
     with c2:
-        clearance_in = st.number_input("Max Clearance (mm) *", value=500, step=50)
+        clearance_in = st.number_input("Max Clearance (mm) *", value=900, step=50)
     with c3:
-        longitud_in = st.number_input("Longitud Tr1 *", value=60.0, step=1.0)
+        longitud_in = st.number_input("Longitud Tr1 *", value=139.2, step=1.0)
 
     c_sub1, c_sub2 = st.columns([2, 2])
     with c_sub1:
-        ubicacion_in = st.text_input("Ubicación", value="Kuwait")
+        ubicacion_in = st.text_input("Ubicación", value="Saudi Arabia")
     with c_sub2:
         regla_viento = st.radio("Criterio de Viento", ["Exacto (100%)", "Permitir Superior"], horizontal=True)
 
@@ -101,21 +103,20 @@ with tab_app:
     if df_ofertas.empty:
         st.warning("No se ha cargado la base de datos o el archivo no está disponible.")
     else:
-        # Filtrado estricto por viento
+        # Filtrado por viento con un pequeño margen para imprecisiones decimales
         if "Exacto" in regla_viento:
-            df_res = df_ofertas[df_ofertas["viento_ms"] == viento_in].copy()
+            df_res = df_ofertas[abs(df_ofertas["viento_ms"] - viento_in) < 0.1].copy()
         else:
-            df_res = df_ofertas[df_ofertas["viento_ms"] >= viento_in].copy()
+            df_res = df_ofertas[df_ofertas["viento_ms"] >= (viento_in - 0.1)].copy()
 
         if df_res.empty:
             st.warning("No se encontraron ofertas que cumplan con la condición de viento.")
         else:
             def scoring(row):
-                # Sistema de puntuación simple: 50% si coincide el clearance, 50% si coincide la longitud
                 pts = 0.0
-                if row["max_clearance_mm"] == clearance_in:
+                if abs(row["max_clearance_mm"] - clearance_in) < 1.0:
                     pts += 50.0
-                if row["longitud_tr1"] == longitud_in:
+                if abs(row["longitud_tr1"] - longitud_in) < 0.1:
                     pts += 50.0
                 return pts
 
@@ -132,8 +133,8 @@ with tab_app:
                         st.markdown(f"Viento: **{row['viento_ms']} m/s** | Max Clearance: **{row['max_clearance_mm']} mm**")
                         st.caption(f"Longitud Tr1: {row['longitud_tr1']} | Tipo: {row['tipo']}")
                     with r3:
-                        st.markdown(f"{row['pct']:.0f}% Coincidencia (Sin viento)", unsafe_allow_html=True)
-                        if row['viento_ms'] == viento_in and row['max_clearance_mm'] == clearance_in and row['longitud_tr1'] == longitud_in:
+                        st.markdown(f"{row['pct']:.0f}% Coincidencia", unsafe_allow_html=True)
+                        if abs(row['viento_ms'] - viento_in) < 0.1 and abs(row['max_clearance_mm'] - clearance_in) < 1.0 and abs(row['longitud_tr1'] - longitud_in) < 0.1:
                             st.markdown(" Geometría Exacta", unsafe_allow_html=True)
                     with r4:
                         if st.button("Ver Ruta", key=f"btn_{idx}_{row['proj_name']}_{row['version']}"):
