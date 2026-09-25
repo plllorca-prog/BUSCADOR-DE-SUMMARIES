@@ -55,8 +55,7 @@ def cargar_ofertas():
         df_ofertas["max_clearance_mm"] = convertir_a_float(df_ofertas["max_clearance"]) if "max_clearance" in df_ofertas.columns else 0.0
         df_ofertas["longitud_tr1"] = convertir_a_float(df_ofertas["length_Tr1"]) if "length_Tr1" in df_ofertas.columns else 0.0
         
-        # DEDUPLICACIÓN INTELIGENTE:
-        # Solo eliminamos la fila si comparte proyecto, versión Y exactamente los mismos valores técnicos
+        # Deduplicación inteligente por parámetros clave
         columnas_filtro_duplicados = ["proj_name", "version", "viento_ms", "max_clearance_mm", "longitud_tr1"]
         cols_existentes = [c for c in columnas_filtro_duplicados if c in df_ofertas.columns]
         
@@ -99,7 +98,8 @@ with tab_app:
     with c2:
         clearance_in = st.number_input("Max Clearance (mm) *", value=900, step=50)
     with c3:
-        longitud_in = st.number_input("Longitud Tr1 *", value=139.2, step=1.0)
+        # Input Opcional: Si se deja vacío (None), no se usa como filtro
+        longitud_in = st.number_input("Longitud Tr1 (Opcional)", value=None, placeholder="Ej: 139.2", step=1.0)
 
     c_sub1, c_sub2 = st.columns([2, 2])
     with c_sub1:
@@ -113,7 +113,7 @@ with tab_app:
     if df_ofertas.empty:
         st.warning("No se ha cargado la base de datos o el archivo no está disponible.")
     else:
-        # Filtrado por viento con margen de tolerancia para decimales (0.1 m/s)
+        # Filtrado obligatorio por viento
         if "Exacto" in regla_viento:
             df_res = df_ofertas[abs(df_ofertas["viento_ms"] - viento_in) <= 0.1].copy()
         else:
@@ -122,13 +122,18 @@ with tab_app:
         if df_res.empty:
             st.warning("No se encontraron ofertas que cumplan con la condición de viento.")
         else:
+            # Puntuación según si Longitud Tr1 se ha especificado o no
             def scoring(row):
-                pts = 0.0
-                if abs(row["max_clearance_mm"] - clearance_in) <= 1.0:
-                    pts += 50.0
-                if abs(row["longitud_tr1"] - longitud_in) <= 0.2:
-                    pts += 50.0
-                return pts
+                if longitud_in is not None and longitud_in > 0:
+                    pts = 0.0
+                    if abs(row["max_clearance_mm"] - clearance_in) <= 1.0:
+                        pts += 50.0
+                    if abs(row["longitud_tr1"] - longitud_in) <= 0.2:
+                        pts += 50.0
+                    return pts
+                else:
+                    # Si no se especifica longitud, la coincidencia depende únicamente del clearance
+                    return 100.0 if abs(row["max_clearance_mm"] - clearance_in) <= 1.0 else 50.0
 
             df_res["pct"] = df_res.apply(scoring, axis=1)
             df_res = df_res.sort_values(by="pct", ascending=False)
@@ -144,7 +149,18 @@ with tab_app:
                         st.caption(f"Longitud Tr1: **{row['longitud_tr1']}** | Tipo: {row['tipo']}")
                     with r3:
                         st.markdown(f"{row['pct']:.0f}% Coincidencia", unsafe_allow_html=True)
-                        if abs(row['viento_ms'] - viento_in) <= 0.1 and abs(row['max_clearance_mm'] - clearance_in) <= 1.0 and abs(row['longitud_tr1'] - longitud_in) <= 0.2:
+                        
+                        # Comprobar si es Geometría Exacta
+                        viento_ok = abs(row['viento_ms'] - viento_in) <= 0.1
+                        clearance_ok = abs(row['max_clearance_mm'] - clearance_in) <= 1.0
+                        
+                        if longitud_in is not None and longitud_in > 0:
+                            longitud_ok = abs(row['longitud_tr1'] - longitud_in) <= 0.2
+                            exacta = viento_ok and clearance_ok and longitud_ok
+                        else:
+                            exacta = viento_ok and clearance_ok
+                            
+                        if exacta:
                             st.markdown(" Geometría Exacta", unsafe_allow_html=True)
                     with r4:
                         if st.button("Ver Ruta", key=f"btn_{idx}_{row['id']}"):
