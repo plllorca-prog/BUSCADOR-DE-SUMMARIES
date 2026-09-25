@@ -1,9 +1,8 @@
 import streamlit as st
 import pandas as pd
-import inspect
 
 # ==========================================
-# CONFIGURACIÓN DE PÁGINA (Menú y barra visibles)
+# CONFIGURACIÓN DE PÁGINA
 # ==========================================
 st.set_page_config(
     page_title="Buscador de Summaries",
@@ -12,44 +11,54 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# Estilos CSS limpios
+# Estilos CSS
 st.markdown("""
 
 """, unsafe_allow_html=True)
 
+# Función auxiliar para convertir números con coma a float
+def convertir_a_float(serie):
+    return pd.to_numeric(
+        serie.astype(str).str.replace(',', '.', regex=False).str.strip(),
+        errors='coerce'
+    ).fillna(0.0)
+
 # ==========================================
-# BASE DE DATOS REAL (SOLO PESTAÑA RawData_1)
+# BASE DE DATOS REAL (PESTAÑA RawData_1)
 # ==========================================
 @st.cache_data
 def cargar_ofertas():
     archivo_excel = "DataBase_Offers_V02-20260924.xlsx"
     
     try:
-        # 1. Leer SOLO la pestaña RawData_1
         df_raw = pd.read_excel(archivo_excel, sheet_name="RawData_1")
         
-        # 2. Filtrar ofertas que contengan "A" en offer_category (ej: "1 A", "A", "A ")
-        es_categoria_a = df_raw["offer_category"].astype(str).str.contains("A", case=False, na=False)
-        df_ofertas = df_raw[es_categoria_a].copy()
+        # Limpiar espacios en blanco en los nombres de las columnas
+        df_raw.columns = df_raw.columns.str.strip()
         
-        # 3. Eliminar duplicados por proyecto y versión
-        df_ofertas = df_ofertas.drop_duplicates(subset=["proj_name", "version"])
+        # Filtrar ofertas que contengan "A" en offer_category (ej: "1 A", "A")
+        if "offer_category" in df_raw.columns:
+            es_cat_a = df_raw["offer_category"].astype(str).str.contains("A", case=False, na=False)
+            df_ofertas = df_raw[es_cat_a].copy()
+        else:
+            df_ofertas = df_raw.copy()
+            
+        # Eliminar duplicados por proyecto y versión
+        if "proj_name" in df_ofertas.columns and "version" in df_ofertas.columns:
+            df_ofertas = df_ofertas.drop_duplicates(subset=["proj_name", "version"])
         
-        # 4. Adaptar columnas generales
+        # Mapeo general
         df_ofertas["id"] = df_ofertas["proj_name"].astype(str) + " (v" + df_ofertas["version"].astype(str) + ")"
-        df_ofertas["nombre"] = df_ofertas["client"]
-        df_ofertas["tipo"] = df_ofertas["offer_category"].astype(str) + " (" + df_ofertas["code"].astype(str) + ")"
-        df_ofertas["ubicacion"] = df_ofertas["country"]
-        
-        # Extraer ruta del archivo
+        df_ofertas["nombre"] = df_ofertas["client"] if "client" in df_ofertas.columns else "Cliente no especificado"
+        df_ofertas["tipo"] = df_ofertas["offer_category"].astype(str) + " (" + df_ofertas["code"].astype(str) + ")" if "code" in df_ofertas.columns else df_ofertas["offer_category"].astype(str)
+        df_ofertas["ubicacion"] = df_ofertas["country"] if "country" in df_ofertas.columns else "Desconocido"
         df_ofertas["ruta_summary"] = df_ofertas["file_root"] if "file_root" in df_ofertas.columns else "Sin ruta disponible"
         
-        # 5. Convertir valores numéricos asegurando float
-        df_ofertas["viento_ms"] = pd.to_numeric(df_ofertas["wind_spd"], errors="coerce").fillna(0.0)
-        df_ofertas["max_clearance_mm"] = pd.to_numeric(df_ofertas["max_clearance"], errors="coerce").fillna(0.0)
-        df_ofertas["longitud_tr1"] = pd.to_numeric(df_ofertas["length_Tr1"], errors="coerce").fillna(0.0)
+        # Conversión segura de números procesando comas decimales
+        df_ofertas["viento_ms"] = convertir_a_float(df_ofertas["wind_spd"]) if "wind_spd" in df_ofertas.columns else 0.0
+        df_ofertas["max_clearance_mm"] = convertir_a_float(df_ofertas["max_clearance"]) if "max_clearance" in df_ofertas.columns else 0.0
+        df_ofertas["longitud_tr1"] = convertir_a_float(df_ofertas["length_Tr1"]) if "length_Tr1" in df_ofertas.columns else 0.0
         
-        # Limpieza de nulos en textos
         df_ofertas = df_ofertas.fillna({
             "ubicacion": "Desconocido",
             "ruta_summary": "Sin ruta disponible"
@@ -63,12 +72,11 @@ def cargar_ofertas():
 df_ofertas = cargar_ofertas()
 
 # ==========================================
-# PESTAÑAS PRINCIPALES (Buscador vs Código Fuente)
+# PESTAÑAS PRINCIPALES
 # ==========================================
 tab_app, tab_code = st.tabs(["🔍 Buscador de Summaries", "💻 Ver Código Fuente"])
 
 with tab_app:
-    # CABECERA
     col_h, col_m1, col_m2 = st.columns([3, 1, 1])
     with col_h:
         st.title("Buscador de Summaries")
@@ -80,7 +88,6 @@ with tab_app:
 
     st.divider()
 
-    # INPUTS
     st.markdown("##### 1. Parámetros de la nueva oferta")
     c1, c2, c3 = st.columns(3)
     with c1:
@@ -96,16 +103,15 @@ with tab_app:
     with c_sub2:
         regla_viento = st.radio("Criterio de Viento", ["Exacto (100%)", "Permitir Superior"], horizontal=True)
 
-    # RESULTADOS
     st.divider()
     st.markdown("##### 2. Resultados compatibles")
     
     if df_ofertas.empty:
         st.warning("No se ha cargado la base de datos o el archivo no está disponible.")
     else:
-        # Filtrado por viento con un pequeño margen para imprecisiones decimales
+        # Filtrado por viento con margen de tolerancia para decimales (0.1 m/s)
         if "Exacto" in regla_viento:
-            df_res = df_ofertas[abs(df_ofertas["viento_ms"] - viento_in) < 0.1].copy()
+            df_res = df_ofertas[abs(df_ofertas["viento_ms"] - viento_in) <= 0.1].copy()
         else:
             df_res = df_ofertas[df_ofertas["viento_ms"] >= (viento_in - 0.1)].copy()
 
@@ -114,9 +120,9 @@ with tab_app:
         else:
             def scoring(row):
                 pts = 0.0
-                if abs(row["max_clearance_mm"] - clearance_in) < 1.0:
+                if abs(row["max_clearance_mm"] - clearance_in) <= 1.0:
                     pts += 50.0
-                if abs(row["longitud_tr1"] - longitud_in) < 0.1:
+                if abs(row["longitud_tr1"] - longitud_in) <= 0.2:
                     pts += 50.0
                 return pts
 
@@ -131,20 +137,19 @@ with tab_app:
                         st.caption(f"Cliente: {row['nombre']} | Ubicación: {row['ubicacion']}")
                     with r2:
                         st.markdown(f"Viento: **{row['viento_ms']} m/s** | Max Clearance: **{row['max_clearance_mm']} mm**")
-                        st.caption(f"Longitud Tr1: {row['longitud_tr1']} | Tipo: {row['tipo']}")
+                        st.caption(f"Longitud Tr1: **{row['longitud_tr1']}** | Tipo: {row['tipo']}")
                     with r3:
                         st.markdown(f"{row['pct']:.0f}% Coincidencia", unsafe_allow_html=True)
-                        if abs(row['viento_ms'] - viento_in) < 0.1 and abs(row['max_clearance_mm'] - clearance_in) < 1.0 and abs(row['longitud_tr1'] - longitud_in) < 0.1:
+                        if abs(row['viento_ms'] - viento_in) <= 0.1 and abs(row['max_clearance_mm'] - clearance_in) <= 1.0 and abs(row['longitud_tr1'] - longitud_in) <= 0.2:
                             st.markdown(" Geometría Exacta", unsafe_allow_html=True)
                     with r4:
-                        if st.button("Ver Ruta", key=f"btn_{idx}_{row['proj_name']}_{row['version']}"):
+                        if st.button("Ver Ruta", key=f"btn_{idx}_{row['id']}"):
                             st.info(f"📁 {row['ruta_summary']}")
                     st.divider()
 
-# VISOR DE CÓDIGO FUENTE
 with tab_code:
     st.subheader("Código fuente de la aplicación (`app.py`)")
-    st.caption("Puedes revisar o copiar el código que está corriendo en producción:")
     with open(__file__, "r", encoding="utf-8") as f:
         code_text = f.read()
     st.code(code_text, language="python")
+    
