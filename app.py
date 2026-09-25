@@ -52,15 +52,10 @@ def cargar_ofertas():
         # Parámetros técnicos estructurales
         df_merged["viento_ms"] = df_merged["wind_spd"]
         df_merged["clearance_mm"] = df_merged["min_clearance"]
-        df_merged["num_strings"] = df_merged["string_Tr1"]
         
-        # Calculamos el total de módulos por tracker
-        df_merged["num_modulos"] = df_merged["string_Tr1"] * df_merged["mod_str"]
-        
-        # Limpieza de datos
+        # Limpieza de datos (sin strings ni módulos)
         df_merged = df_merged.fillna({
             "viento_ms": 0, "clearance_mm": 0, 
-            "num_strings": 0, "num_modulos": 0, 
             "ubicacion": "Desconocido",
             "ruta_summary": "Sin ruta disponible"
         })
@@ -92,15 +87,11 @@ with tab_app:
 
     # INPUTS
     st.markdown("##### 1. Parámetros de la nueva oferta")
-    c1, c2, c3, c4 = st.columns(4)
+    c1, c2 = st.columns(2)
     with c1:
         viento_in = st.number_input("Viento (m/s) *", value=26.0, step=0.5)
     with c2:
         clearance_in = st.number_input("Clearance (mm) *", value=500, step=50)
-    with c3:
-        strings_in = st.number_input("Nº de Strings", value=4, step=1)
-    with c4:
-        modulos_in = st.number_input("Nº de Módulos", value=104, step=4)
 
     c_sub1, c_sub2 = st.columns([2, 2])
     with c_sub1:
@@ -125,10 +116,8 @@ with tab_app:
             st.warning("No se encontraron ofertas que cumplan con la condición de viento.")
         else:
             def scoring(row):
-                pts = 40.0 if row["clearance_mm"] == clearance_in else 20.0
-                pts += 30.0 if row["num_strings"] == strings_in else 10.0
-                pts += 30.0 if row["num_modulos"] == modulos_in else 10.0
-                return pts
+                # Puntuación basada solo en el Clearance (100% si coincide, 75% si no)
+                return 100.0 if row["clearance_mm"] == clearance_in else 75.0
 
             df_res["pct"] = df_res.apply(scoring, axis=1)
             df_res = df_res.sort_values(by="pct", ascending=False)
@@ -141,7 +130,7 @@ with tab_app:
                         st.caption(f"Cliente: {row['nombre']} | Ubicación: {row['ubicacion']}")
                     with r2:
                         st.markdown(f"Viento: **{row['viento_ms']} m/s** | Clearance: **{row['clearance_mm']} mm**")
-                        st.caption(f"{row['num_strings']} Strings | {row['num_modulos']} Módulos | {row['tipo']}")
+                        st.caption(f"Tipo: {row['tipo']}")
                     with r3:
                         st.markdown(f"{row['pct']:.0f}% Coincidencia", unsafe_allow_html=True)
                         if row['viento_ms'] == viento_in and row['clearance_mm'] == clearance_in:
@@ -159,4 +148,3 @@ with tab_code:
     with open(__file__, "r", encoding="utf-8") as f:
         code_text = f.read()
     st.code(code_text, language="python")
-
